@@ -1,0 +1,392 @@
+---
+title: "Changing Voter Registration and Campus Evacuations at UF and FSU"
+author: "Juliana Fray"
+date: "12/2/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,include = FALSE}
+library(readr)
+library(lubridate)
+library(data.table)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(rgdal)
+
+setwd("C:\\Users\\Owner\\Dropbox\\FL_Rutgers\\R_output")
+
+#Helper Functions
+age = function(from, to) {
+  from_lt = as.POSIXlt(from)
+  to_lt = as.POSIXlt(to)
+  age = to_lt$year - from_lt$year
+  ifelse(to_lt$mon < from_lt$mon |
+           (to_lt$mon == from_lt$mon & to_lt$mday < from_lt$mday),
+         age - 1, age)
+}
+
+load_voter_file = function(files2read, colnames2use) {
+  for (file2read in files2read) {
+    dta <- read_delim(file = file2read,
+                      col_types = paste(rep("c", times = length(colnames2use)), collapse = ""),
+                      delim = "\t",
+                      escape_double = FALSE,
+                      col_names = colnames2use)
+    if (match(file2read, files2read) == 1) {
+      combined_data <- dta
+    }
+    else {
+      combined_data <- bind_rows(combined_data, dta)
+      rm(dta)
+    }
+  }
+  return(combined_data)
+}
+
+#Reading in February Voter File:
+colnames2use <- c("CountyCode", "VoterID", "NameLast", "NameSuffix", "NameFirst", "NameMiddle","RequestedPublicRecordsExemption",
+                  "ResidenceAddressLine1", "ResidenceAddressLine2", "ResidenceCity", "ResidenceState", "ResidenceZipcode",
+                  "MailingAddressLine1", "MailingAddressLine2", "MailingAddressLine3", "MailingCity", "MailingState", "MailingZipcode", 
+                  "MailingCountry","Gender", "Race", "BirthDate","RegistrationDate", "PartyAffiliation","Precinct", "PrecinctGroup", 
+                  "PrecinctSplit", "PrecinctSuffix","VoterStatus","CongressionalDistrict", "HouseDistrict", "SenateDistrict",
+                  "CountyCommissionDistrict", "SchoolBoardDistrict","DaytimeAreaCode", "DaytimePhoneNumber", "DaytimePhoneExtension", "EmailAddress")
+
+files2read <- Sys.glob(paths = "C:\\Users\\Owner\\Dropbox\\FL_Rutgers\\data\\Feb2020_VoterFile\\*.txt")
+
+for (file2read in files2read) {
+  dta <- read_delim(file = file2read,
+                    col_types = paste(rep("c", times = length(colnames2use)), collapse = ""),
+                    delim = "\t",
+                    escape_double = FALSE,
+                    col_names = colnames2use)
+  if (match(file2read, files2read) == 1) {
+    FLVoterFile <- dta
+  }
+  else {
+    FLVoterFile <- bind_rows(FLVoterFile, dta)
+  }
+}
+
+rm(dta)
+
+drops <- c("RequestedPublicRecordsExemption",
+           "MailingAddressLine1", "MailingAddressLine2", "MailingAddressLine3", "MailingCity", "MailingState", "MailingZipcode", 
+           "MailingCountry",
+           "ResidenceAddressLine2",  
+           "MailingAddressLine1", "MailingAddressLine2", "MailingAddressLine3", "MailingCity", "MailingState", "MailingZipcode", 
+           "MailingCountry", "PrecinctGroup", "PrecinctSplit", "PrecinctSuffix", 
+           "CountyCommissionDistrict", "SchoolBoardDistrict", "DaytimePhoneExtension")
+
+FLVoterFile <- FLVoterFile[ , !(names(FLVoterFile) %in% drops)]
+
+#Creating new variables: 
+  #Parties (Dem, Rep, NPA, Other), Race, Date, Registration Date, Voter   ID as numeric variable
+  
+FLVoterFile <- FLVoterFile %>% mutate(VoterID = as.numeric(VoterID))
+
+FLVoterFile <- FLVoterFile %>%
+  mutate(
+  PartyAffiliation = case_when(
+    tolower(PartyAffiliation) == "dem" ~ "DEM",
+    tolower(PartyAffiliation) == "rep" ~ "REP",
+    tolower(PartyAffiliation) == "npa" ~ "NPA",
+    TRUE ~ "Other"),
+  
+  Race = case_when(
+    Race == 3 ~ 'Black',
+    Race == 4 ~ 'Hispanic',
+    Race == 5 ~ 'White',
+    TRUE ~ 'Other'),
+  
+  BirthDate = as.Date(BirthDate, "%m/%d/%Y"),
+  RegistrationDate = as.Date(RegistrationDate, "%m/%d/%Y"), 
+  
+  reg.date = ymd(RegistrationDate),
+  
+  VoterID = as.numeric(VoterID)) %>%
+  
+  separate(reg.date, sep="-", into = c("reg.year", "reg.month", "reg.day"),
+)
+
+#Creating new age categories: 
+FLVoterFile$Age <- age(FLVoterFile$BirthDate,"2020-02-01")
+
+FLVoterFile <- FLVoterFile %>%
+  mutate( 
+    Agecat2 = case_when( 
+      Age >= 18 & Age < 21 ~ "18-20",
+      Age >= 21 & Age < 30 ~ "21-29", 
+      Age >= 30 & Age < 45 ~ "30-44", 
+      Age >= 45 & Age < 65 ~ "45-64",
+      Age >= 65 & Age < 106 ~ "65-105", 
+      TRUE ~ "Other"
+      )
+  )
+
+#Save file: 
+FLVF_20200201 <- FLVoterFile
+rm(FLVoterFile)
+save(FLVF_20200201, file = "FLVF_20200201.RData")
+
+load("C:\\Users\\Owner\\Dropbox\\FL_Rutgers\\R_output\\FLVF_20200201.RData")
+
+#Selecting and saving only County Registration and Voter ID: 
+FLVF_20200201_county <- FLVF_20200201 %>% 
+  select(VoterID, CountyCode)
+
+save(FLVF_20200201_county, file = "FLVF_20200201_county.RData")
+load("C:\\Users\\Owner\\Dropbox\\FL_Rutgers\\R_output\\FLVF_20200201_county.RData")
+
+
+#Reading in 2020 Presidential Preference Primary Recap File:
+colnames2userecap <- c("CountyCode", "VoterID", "NameLast", "NameSuffix", "NameFirst",                     "NameMiddle","RequestedPublicRecordsExemption","ResidenceAddressLine1","ResidenceAddressLine2", "ResidenceCity", "ResidenceState", "ResidenceZipcode", "MailingAddressLine1", "MailingAddressLine2", "MailingAddresLine3", "MailingCity", "MailingState", "MailingZipcode", "MailingCountry", "Gender", "Race", "BirthDate","RegistrationDate", "PartyAffiliation", "Precinct", "PrecinctGroup", "PrecinctSplit", "PrecinctSuffix", "VoterStatus","CongressionalDistrict", "HouseDistrict", "SenateDistrict", "CountyCommissionDistrict", "SchoolBoardDistrict","DaytimeAreaCode", "DaytimePhoneNumber", "DaytimePhoneExtension", "FormerName", "VotingAssistance", "PollWorker", "Birthplace", "Military", "MilitaryDependent", "Overseas", "VoteHistoryCode", "EmailAddress")
+keeps <- c("CountyCode", "VoterID", 
+           "ResidenceAddressLine1",
+           "ResidenceAddressLine2", "ResidenceCity", "ResidenceState", "ResidenceZipcode", "MailingAddressLine1", "MailingAddressLine2", "MailingAddresLine3", "MailingCity", "MailingState", "MailingZipcode", "MailingCountry", "Gender", "Race", "BirthDate","RegistrationDate", "PartyAffiliation", "Precinct", "PrecinctGroup", "PrecinctSplit", "PrecinctSuffix", "VoterStatus", "VoteHistoryCode")
+
+files2readrecap <- Sys.glob(paths = "C:\\Users\\Owner\\Dropbox\\FL_Rutgers\\data\\March172020_RecapDetail_Rutgers\\*.txt")
+
+FLRecap <- load_voter_file(files2readrecap, colnames2userecap)
+
+keeps <- c("CountyCode", "VoterID", 
+           "ResidenceAddressLine1",
+           "ResidenceAddressLine2", "ResidenceCity", "ResidenceState", "ResidenceZipcode", "MailingAddressLine1", "MailingAddressLine2", "MailingAddresLine3", "MailingCity", "MailingState", "MailingZipcode", "MailingCountry", "Gender", "Race", "BirthDate","RegistrationDate", "PartyAffiliation", "Precinct", "PrecinctGroup", "PrecinctSplit", "PrecinctSuffix", "VoterStatus", "VoteHistoryCode")
+
+FLRecap <- FLRecap %>% 
+  select(all_of(keeps))
+
+#Creating new variables: 
+FLRecap <- FLRecap %>% mutate(VoterID = as.numeric(VoterID))
+
+FLRecap <- FLRecap %>%
+  mutate(
+    PartyAffiliation = case_when(
+      tolower(PartyAffiliation) == "dem" ~ "DEM",
+      tolower(PartyAffiliation) == "rep" ~ "REP",
+      tolower(PartyAffiliation) == "npa" ~ "NPA",
+      TRUE ~ "Other"),
+    
+    Race = case_when(
+      Race == 3 ~ 'Black',
+      Race == 4 ~ 'Hispanic',
+      Race == 5 ~ 'White',
+      TRUE ~ 'Other'),
+    
+    BirthDate = as.Date(BirthDate, "%m/%d/%Y"),
+    RegistrationDate = as.Date(RegistrationDate, "%m/%d/%Y"), 
+    reg.date = ymd(RegistrationDate),
+    VoterID = as.numeric(VoterID)) %>%
+  
+  separate(reg.date, sep="-", into = c("reg.year", "reg.month", "reg.day"),
+  )
+
+FLRecap$Age <- age(FLRecap$BirthDate,"2020-03-17")
+
+FLVoterFile$Age <- age(FLVoterFile$BirthDate,"2020-02-01")
+
+FLVoterFile <- FLVoterFile %>%
+  mutate( 
+    Agecat2 = case_when( 
+      Age >= 18 & Age < 21 ~ "18-20",
+      Age >= 21 & Age < 30 ~ "21-29", 
+      Age >= 30 & Age < 45 ~ "30-44", 
+      Age >= 45 & Age < 65 ~ "45-64",
+      Age >= 65 & Age < 106 ~ "65-105", 
+      TRUE ~ "Other"
+    )
+  )
+
+FL2020PPP_Juliana <- FLRecap
+
+save(FL2020PPP_Juliana, file = "FL2020PPP_Juliana.RData")
+
+load("C:\\Users\\Owner\\Dropbox\\FL_Rutgers\\R_output\\FL2020PPP_Juliana.RData")
+
+#Filtering and saving just 18-20 and 21-29 year olds: 
+FL2020PPP_Age <- FL2020PPP_Juliana %>% 
+  filter(Agecat2 == "18-20" | Agecat2 == "21-29")
+
+save(FL2020PPP_Age, file = "FL2020PPP_Age.RData")
+
+load("C:\\Users\\Owner\\Dropbox\\FL_Rutgers\\R_output\\FL2020PPP_Age.RData")
+
+#Make city names upper case:
+FL2020PPP_Age$ResidenceCity <- toupper(FL2020PPP_Age$ResidenceCity)
+
+#ON-CAMPUS DATA
+#Filtering on-campus precincts:
+FL2020PPP_Age$ResidenceAddressLine1 <- toupper(FL2020PPP_Age$ResidenceAddressLine1)
+
+on_campus <- FL2020PPP_Age %>% 
+  filter(Precinct == "31" | ResidenceAddressLine1 == "0 AZALEA HALL  " | ResidenceAddressLine1 == "0 BROWARD HALL  "
+         | ResidenceAddressLine1 == "0 BRYAN HALL  " | ResidenceAddressLine1 == "0 CAWTHON HALL  " 
+         | ResidenceAddressLine1 == "0 DEGRAFF HALL  " | ResidenceAddressLine1 == "0 DORMAN HALL  "
+         | ResidenceAddressLine1 == "0 DEVINEY HALL  " | ResidenceAddressLine1 == "0 GILCHRIST HALL  "
+         | ResidenceAddressLine1 == "0 JENNIE MURPHREE HALL  " | ResidenceAddressLine1 == "0 LANDIS HALL  "
+         | ResidenceAddressLine1 == "0 MAGNOLIA HALL  " | ResidenceAddressLine1 == "0 REYNOLDS HALL  "
+         | ResidenceAddressLine1 == "0 SALLEY HALL  " | ResidenceAddressLine1 == "0 WILDWOOD HALL  ")
+
+#OFF-CAMPUS DATA
+#UF zip codes; 32611 (on campus), 32603 (on-campus), 32607 (on- campus), 32608, 32601, 32605
+#FSU zip codes; 32306 (on-campus), 32304 (on campus), 32301, 32310, 32399
+off_campus <- FL2020PPP_Age %>%
+  filter(ResidenceZipcode == "32306" | ResidenceZipcode == "32304" 
+         | ResidenceZipcode == "32301" | ResidenceZipcode == "32310"
+         | ResidenceZipcode == "32399" | ResidenceZipcode == "32611"
+         | ResidenceZipcode == "32603" | ResidenceZipcode == "32607"
+         | ResidenceZipcode == "32608" | ResidenceZipcode == "32601"
+         | ResidenceZipcode == "32605")
+
+#Filtering out on-campus students: 
+off_campus <- filter(off_campus, Precinct != "31")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 AZALEA HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 BROWARD HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 BRYAN HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 CAWTHON HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 DEGRAFF HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 DORMAN HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 DEVINEY HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 GILCHRIST HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 JENNIE MURPHREE HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 LANDIS HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 MAGNOLIA HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 REYNOLDS HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 SALLEY HALL")
+off_campus <- filter(off_campus, ResidenceAddressLine1 != "0 WILDWOOD HALL")
+
+#Creating dummy variable for on/off campus:
+#1 = ON campus; 0 = OFF campus
+on_campus$Dummy <- 1
+off_campus$Dummy <- 0
+
+#Merging on/off campus dataset:
+UFFSU_Students <- rbind(on_campus, off_campus)
+
+#Save file: 
+save(UFFSU_Students, file = "UFFSU_Students.RData")
+
+UFFSU_Students$Dummy <- as.character(UFFSU_Students$Dummy)
+
+#Merge February 2020 with 2020 PPP Recap:
+UFFSU_Students_FLRecap2020PPP_Feb2020  <- UFFSU_Students  %>% 
+  left_join(FLVF_20200201_county, by=("VoterID"))
+
+save(UFFSU_Students_FLRecap2020PPP_Feb2020, file = "UFFSU_Students_FLRecap2020PPP_Feb2020.RData")
+
+load("C:\\Users\\Owner\\Dropbox\\FL_Rutgers\\R_output\\UFFSU_Students_FLRecap2020PPP_Feb2020.RData")
+
+#Filtering just 18-20 year olds: 
+UFFSU_Students_FLRecap2020PPP_Feb2020_Age <- UFFSU_Students_FLRecap2020PPP_Feb2020 %>%
+  filter(Agecat2 == "18-20")
+```
+
+INTRODUCTION Younger voters face many barriers in voting and elections, largely because they are more mobile than older voters. Many students are frequently moving every few years, whether to move away to attend college or university, take the next step in their professional career, or for more access to resources. This can cause great difficulties and create problems for younger voters, especially when there is a disruption of normalcy, such as the COVID-19 pandemic.
+
+The following project attempts to explore this central question:
+
+Whether students who were registered to vote on their college campuses updated their voter registration to their home addresses when they were required to vacate campus due to the COVID-19 pandemic, and whether they were able to successfully cast a ballot.
+
+This project looks specifically at the University of Florida in Alachua county and Florida State University in Leon county. I hypothesize that students at these institutions who were living in dorms during February of 2020 will change their voter registration from their respective campus precinct to a home address outside of Alachua or Leon county.
+
+DATA To track student movement, I first used a snapshot of the recap file from Alachua and Leon counties from February 2020. I compared this with a snapshot taken after the Presidential Preference Primary (PPP) election in March 2020, which also included Broward, Dade, and Palm Beach counties, which were used as a reference to track if students moved between the two recap file snapshots. I also used the voter history file, which provides each student voters' preferred method of voting they utilized in the March voter recap file.
+
+The voter history file utilizes a lettering system to code method of voting. Each method is coded as such:
+
+    Vote History Code Reference
+    A = Vote By Mail 
+    B = Vote By Mail Uncounted 
+    E = Early Vote In-Person
+    N = No Vote
+    P = Provisional NOT Counted
+    Y = Election Day at Polls  
+    L = Vote By Mail Received Late 
+
+To analyze the data, the February recap file, the March recap file, and the vote history file were combined into one dataset. First, I filtered the file to only contain voters who were between the ages of 18 and 20, and then I filtered for only voters who had residential addresses that fell within UF or FSU campus boundaries or the immediate zip codes surrounding the campus. Then I created a dichotomous variable (or dummy variable) for on-campus and off-campus students. Lastly, I visualized my results and different cross tabulations through various tables and graphs.
+
+RESULTS Whether students who were registered to vote on their college campuses updated their voter registration to their home addresses when they were required to vacate campus due to the COVID-19 pandemic, and whether they were able to successfully cast a ballot.
+
+TABLE OF STUDENTS 18-20 VOTE HISTORY WITH DUMMY VARIABLE: 1 = on-campus, 0 = off-campus
+
+```{r, include = FALSE}
+table(UFFSU_Students_FLRecap2020PPP_Feb2020_Age$VoteHistoryCode, UFFSU_Students_FLRecap2020PPP_Feb2020_Age$Dummy, exclude = NULL)
+```
+
+```{r, include = FALSE}
+round(prop.table(table(UFFSU_Students_FLRecap2020PPP_Feb2020_Age$VoteHistoryCode, UFFSU_Students_FLRecap2020PPP_Feb2020_Age$Dummy, exclude = NULL), 2), 4) * 100
+```
+
+TABLE OF WHERE STUDENTS 18-20 WERE REGISTERED ON FEBRUARY 2020 VS. MARCH 2020
+
+```{r, include = FALSE}
+table(UFFSU_Students_FLRecap2020PPP_Feb2020_Age$CountyCode.y, UFFSU_Students_FLRecap2020PPP_Feb2020_Age$CountyCode.x, exclude = NULL)
+```
+
+```{r, include = FALSE}
+ggplot(UFFSU_Students_FLRecap2020PPP_Feb2020_Age, aes(CountyCode.y))+
+  geom_bar(fill= "violetred")+
+  labs(
+    title = "Student Registration, February 2020") 
+```
+
+```{r, include = FALSE}
+ggplot(UFFSU_Students_FLRecap2020PPP_Feb2020_Age, aes(CountyCode.x))+
+  geom_bar(fill= "cadetblue4")+
+  labs(
+    title = "Student Registration, March 2020")
+```
+
+```{r, include = FALSE}
+round(prop.table(table(UFFSU_Students_FLRecap2020PPP_Feb2020_Age$CountyCode.y, UFFSU_Students_FLRecap2020PPP_Feb2020_Age$CountyCode.x, exclude = NULL), 2), 4) * 100
+```
+
+TABLE OF STUDENTS WHO MOVED BETWEEN FEBRUARY 2020 AND MARCH 2020 1 = Moved 0 = Did Not Move
+
+```{r, include = FALSE}
+UFFSU_Students_FLRecap2020PPP_Feb2020_Age$moved <-  with(UFFSU_Students_FLRecap2020PPP_Feb2020_Age, ifelse(CountyCode.x == CountyCode.y, 0, 1))
+```
+
+```{r, include = FALSE}
+table(UFFSU_Students_FLRecap2020PPP_Feb2020_Age$moved, UFFSU_Students_FLRecap2020PPP_Feb2020_Age$CountyCode.x)
+```
+
+TABLE OF STUDENTS WHO MOVED VOTE HISTORY
+
+```{r, include = FALSE}
+table(UFFSU_Students_FLRecap2020PPP_Feb2020_Age$VoteHistoryCode, UFFSU_Students_FLRecap2020PPP_Feb2020_Age$moved==1, exclude = NA)
+```
+
+```{r, include = FALSE}
+ggplot(UFFSU_Students_FLRecap2020PPP_Feb2020_Age, aes(VoteHistoryCode))+
+  geom_bar(fill= "hotpink2")+
+  labs(
+    title = "Moved vs. Did Not Move Vote History")
+```
+
+TABLE OF VOTE HISTORY OF ONLY STUDENTS WHO VOTED Of all of the on-campus and off-campus students, only 3,379 cast a ballot.
+
+```{r, include = FALSE}
+UFFSUVoters <- UFFSU_Students_FLRecap2020PPP_Feb2020_Age %>% 
+  filter(VoteHistoryCode !="N")
+```
+
+```{r, include = FALSE}
+UFFSUVoters$VoteHistoryCode <- as.character(UFFSUVoters$VoteHistoryCode)
+table(UFFSUVoters$VoteHistoryCode, UFFSUVoters$moved==1, exclude = NA)
+```
+
+```{r, include = FALSE}
+ggplot(UFFSUVoters, aes(VoteHistoryCode))+
+  geom_bar(fill= "deeppink3")+
+  labs(
+    title = "Students Who Voted in the PPP 2020",
+    subtitle = "includes Alachua, Broward, Dade, Leon and Palm Beach")
+```
+
+CONCLUSION It is difficult to turn youth voters out, and even more difficult in a pandemic that shuffled college and university students away from campus. The data show us that a significant number of college students did not vote in the 2020 presidential preference primary, and that observations decrease significantly when the non-voters are filtered from the dataset.
+
+Even so, the small percentage of students that were able to vote did so mainly utilizing the early in-person voting option. I suspect that early voting numbers were so high because students utilized the on-campus precincts before the height of the pandemic. As the Presidential Preference Primary does not get as much fanfare and attention as the general election, I also assume that the students who did participate are voters who are tapped to the political world and have an steady voting record in off-year and special elections.
